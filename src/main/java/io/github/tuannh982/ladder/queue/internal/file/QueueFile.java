@@ -17,7 +17,9 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.AbstractMap;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
 
 @Slf4j
@@ -115,10 +117,6 @@ public class QueueFile implements Closeable {
         return new QueueFileIterator();
     }
 
-    public Iterator<Record> iterator(long offset) throws IOException {
-        return new QueueFileIterator(offset);
-    }
-
     @Override
     public void close() throws IOException {
         if (channel != null && channel.isOpen()) {
@@ -127,19 +125,33 @@ public class QueueFile implements Closeable {
         }
     }
 
+    @SuppressWarnings("DuplicatedCode")
+    public Map.Entry<Record, Integer> read(int offset) throws IOException {
+        int currentOffset = offset;
+        ByteBuffer headerBuffer = ByteBuffer.allocate(Record.HEADER_SIZE);
+        currentOffset += FileUtils.read(channel, currentOffset, headerBuffer);
+        Record.Header header = Record.Header.deserialize(headerBuffer);
+        ByteBuffer dataBuffer = ByteBuffer.allocate(header.getValueSize());
+        currentOffset += FileUtils.read(channel, currentOffset, dataBuffer);
+        Record entry = Record.deserialize(dataBuffer, header);
+        if (!entry.verifyChecksum()) {
+            throw new IOException("checksum failed");
+        }
+        return new AbstractMap.SimpleImmutableEntry<>(entry, currentOffset);
+    }
+    
+    public long size() throws IOException {
+        return channel.size();
+    }
+
     private class QueueFileIterator implements Iterator<Record> {
         private final FileChannel iterChannel;
         private final long channelSize;
-        private long offset;
+        private long offset = 0;
 
         public QueueFileIterator() throws IOException {
-            this(0);
-        }
-
-        public QueueFileIterator(long offset) throws IOException {
             iterChannel = FileChannel.open(path(), StandardOpenOption.READ);
             channelSize = iterChannel.size();
-            this.offset = offset;
         }
 
         @Override
@@ -152,10 +164,10 @@ public class QueueFile implements Closeable {
             if (hasNext()) {
                 try {
                     ByteBuffer headerBuffer = ByteBuffer.allocate(Record.HEADER_SIZE);
-                    offset += FileUtils.read(iterChannel, offset, headerBuffer);
+                    offset += iterChannel.read(headerBuffer);
                     Record.Header header = Record.Header.deserialize(headerBuffer);
                     ByteBuffer dataBuffer = ByteBuffer.allocate(header.getValueSize());
-                    offset += FileUtils.read(iterChannel, offset, dataBuffer);
+                    offset += iterChannel.read(dataBuffer);
                     Record entry = Record.deserialize(dataBuffer, header);
                     if (!entry.verifyChecksum()) {
                         throw new IOException("checksum failed");

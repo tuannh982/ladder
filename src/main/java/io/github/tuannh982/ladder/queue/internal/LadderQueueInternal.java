@@ -2,6 +2,7 @@ package io.github.tuannh982.ladder.queue.internal;
 
 import io.github.tuannh982.ladder.commons.concurrent.RLock;
 import io.github.tuannh982.ladder.queue.internal.file.QueueFile;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.Closeable;
 import java.io.File;
@@ -9,6 +10,7 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.NavigableMap;
 
+@Slf4j
 public class LadderQueueInternal implements Closeable {
     private final LadderQueueOptions options;
     private final QueueDirectory queueDirectory;
@@ -18,6 +20,8 @@ public class LadderQueueInternal implements Closeable {
     private QueueFile currentQueueFile;
     // sequence number
     private long writeSequenceNumber;
+    private ReadMetadata readMetadata;
+    private QueueFile currentReadFile;
     // locks
     private final RLock writeLock;
 
@@ -63,8 +67,46 @@ public class LadderQueueInternal implements Closeable {
         }
     }
 
+    @SuppressWarnings("java:S1168")
     public byte[] take() throws IOException {
-        // TODO
+        if (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
+            log.info("no new elements");
+            return null;
+        }
+        if (readMetadata.isEmpty()) {
+            Map.Entry<Long, QueueFile> firstEntry = queueFileMap.firstEntry(); // blocking operation
+            if (firstEntry != null) {
+                readMetadata.setCurrentReadFile(firstEntry.getKey());
+                readMetadata.setCurrentReadOffset(0);
+                readMetadata.setReadSequenceNumber(firstEntry.getKey());
+                currentReadFile = firstEntry.getValue();
+            }
+        }
+        if (readMetadata.isEmpty()) {
+            throw new IllegalStateException("queue empty");
+        }
+        Map.Entry<Long, QueueFile> floorEntry = queueFileMap.floorEntry(readMetadata.getReadSequenceNumber());
+        if (floorEntry == null) {
+            log.info("queue file was deleted, skipping entries");
+            readMetadata.clear();
+            return take(); // retry
+        }
+        long entryFileId = floorEntry.getKey();
+        if (entryFileId != readMetadata.getCurrentReadFile()) {
+            readMetadata.setCurrentReadFile(entryFileId);
+            readMetadata.setCurrentReadOffset(0);
+            // TODO delete currentReadFile
+            currentReadFile = floorEntry.getValue();
+        }
+        Map.Entry<Record, Integer> readRecordReturn = currentReadFile.read(readMetadata.getCurrentReadOffset());
+        Record readRecord = readRecordReturn.getKey();
+        int newFileOffset = readRecordReturn.getValue();
+        try {
+            return readRecord.getValue();
+        } finally {
+            readMetadata.setCurrentReadOffset(newFileOffset);
+            readMetadata.setReadSequenceNumber(readRecord.getHeader().getSequenceNumber() + 1);
+        }
     }
 
     @Override
@@ -74,9 +116,11 @@ public class LadderQueueInternal implements Closeable {
             if (currentQueueFile != null) {
                 currentQueueFile.close();
             }
+            for (QueueFile queueFile : queueFileMap.values()) {
+                queueFile.close();
+            }
             queueDirectory.close();
-            // TODO save read metadata
-            // TODO
+            readMetadata.close();
         } finally {
             writeLock.release(rlock);
         }
@@ -96,7 +140,7 @@ public class LadderQueueInternal implements Closeable {
             currentQueueFile = createNewQueueFile(entry.getHeader().getSequenceNumber());
             queueDirectory.sync();
         } else if (currentQueueFile.getWriteOffset() + entry.serializedSize() > options.getMaxFileSize()) {
-            currentQueueFile.close();
+            currentQueueFile.flushToDisk();
             currentQueueFile = createNewQueueFile(entry.getHeader().getSequenceNumber());
             queueDirectory.sync();
         }
