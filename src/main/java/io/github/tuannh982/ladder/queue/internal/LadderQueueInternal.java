@@ -14,6 +14,8 @@ public class LadderQueueInternal implements Closeable {
     private final QueueDirectory queueDirectory;
     // data
     private final NavigableMap<Long, QueueFile> queueFileMap;
+    // files
+    private QueueFile currentQueueFile;
     // sequence number
     private long writeSequenceNumber;
     // locks
@@ -49,21 +51,62 @@ public class LadderQueueInternal implements Closeable {
         this.writeLock = new RLock();
     }
 
-    public long put(byte[] value) {
+    public long put(byte[] value) throws IOException {
         boolean rlock = writeLock.lock();
         try {
+            Record entry = new Record(value);
+            entry.getHeader().setSequenceNumber(nextSequenceNumber());
+            writeToCurrentQueueFile(entry);
+            return entry.getHeader().getSequenceNumber();
+        } finally {
+            writeLock.release(rlock);
+        }
+    }
+
+    public byte[] take() throws IOException {
+        // TODO
+    }
+
+    @Override
+    public void close() throws IOException {
+        boolean rlock = writeLock.lock();
+        try {
+            if (currentQueueFile != null) {
+                currentQueueFile.close();
+            }
+            queueDirectory.close();
+            // TODO save read metadata
             // TODO
         } finally {
             writeLock.release(rlock);
         }
     }
 
-    public byte[] take() {
-        // TODO
+    private long nextSequenceNumber() {
+        return writeSequenceNumber++;
     }
 
-    @Override
-    public void close() throws IOException {
-        // TODO
+    private void writeToCurrentQueueFile(Record entry) throws IOException {
+        rolloverCurrentQueueFile(entry);
+        currentQueueFile.write(entry);
+    }
+
+    private void rolloverCurrentQueueFile(Record entry) throws IOException {
+        if (currentQueueFile == null) {
+            currentQueueFile = createNewQueueFile(entry.getHeader().getSequenceNumber());
+            queueDirectory.sync();
+        } else if (currentQueueFile.getWriteOffset() + entry.serializedSize() > options.getMaxFileSize()) {
+            currentQueueFile.close();
+            currentQueueFile = createNewQueueFile(entry.getHeader().getSequenceNumber());
+            queueDirectory.sync();
+        }
+    }
+
+    public QueueFile createNewQueueFile(long fileStartSequenceNumber) throws IOException {
+        QueueFile file = QueueFile.create(fileStartSequenceNumber, queueDirectory, options);
+        if (queueFileMap.putIfAbsent(file.getStartSequenceNumber(), file) != null) {
+            throw new IOException("File already existed");
+        }
+        return file;
     }
 }

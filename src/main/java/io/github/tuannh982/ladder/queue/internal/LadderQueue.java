@@ -16,12 +16,12 @@ public class LadderQueue implements Queue {
     }
 
     @Override
-    public long put(byte[] value) {
+    public long put(byte[] value) throws IOException {
         return internal.put(value);
     }
 
     @Override
-    public byte[] take() {
+    public byte[] take() throws IOException {
         return internal.take();
     }
 

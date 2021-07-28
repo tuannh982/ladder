@@ -1,5 +1,6 @@
 package io.github.tuannh982.ladder.queue.internal.file;
 
+import io.github.tuannh982.ladder.commons.io.FileUtils;
 import io.github.tuannh982.ladder.commons.number.NumberUtils;
 import io.github.tuannh982.ladder.queue.internal.LadderQueueOptions;
 import io.github.tuannh982.ladder.queue.internal.QueueDirectory;
@@ -114,6 +115,10 @@ public class QueueFile implements Closeable {
         return new QueueFileIterator();
     }
 
+    public Iterator<Record> iterator(long offset) throws IOException {
+        return new QueueFileIterator(offset);
+    }
+
     @Override
     public void close() throws IOException {
         if (channel != null && channel.isOpen()) {
@@ -125,11 +130,16 @@ public class QueueFile implements Closeable {
     private class QueueFileIterator implements Iterator<Record> {
         private final FileChannel iterChannel;
         private final long channelSize;
-        private long offset = 0;
+        private long offset;
 
         public QueueFileIterator() throws IOException {
+            this(0);
+        }
+
+        public QueueFileIterator(long offset) throws IOException {
             iterChannel = FileChannel.open(path(), StandardOpenOption.READ);
             channelSize = iterChannel.size();
+            this.offset = offset;
         }
 
         @Override
@@ -142,10 +152,10 @@ public class QueueFile implements Closeable {
             if (hasNext()) {
                 try {
                     ByteBuffer headerBuffer = ByteBuffer.allocate(Record.HEADER_SIZE);
-                    offset += channel.read(headerBuffer);
+                    offset += FileUtils.read(iterChannel, offset, headerBuffer);
                     Record.Header header = Record.Header.deserialize(headerBuffer);
                     ByteBuffer dataBuffer = ByteBuffer.allocate(header.getValueSize());
-                    offset += channel.read(dataBuffer);
+                    offset += FileUtils.read(iterChannel, offset, dataBuffer);
                     Record entry = Record.deserialize(dataBuffer, header);
                     if (!entry.verifyChecksum()) {
                         throw new IOException("checksum failed");
