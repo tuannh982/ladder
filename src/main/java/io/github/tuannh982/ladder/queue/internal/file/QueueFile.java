@@ -25,7 +25,7 @@ import java.util.NoSuchElementException;
 @Slf4j
 @Getter
 public class QueueFile implements Closeable {
-    private static final String INDEX_FILE_EXTENSION = ".index";
+    private static final String QUEUE_FILE_EXTENSION = ".data";
 
     private final long startSequenceNumber;
     private final QueueDirectory queueDirectory;
@@ -56,7 +56,7 @@ public class QueueFile implements Closeable {
 
     @SuppressWarnings("java:S2095")
     public static QueueFile create(long startSequenceNumber, QueueDirectory queueDirectory, LadderQueueOptions options) throws IOException {
-        File file = queueDirectory.path().resolve(startSequenceNumber + INDEX_FILE_EXTENSION).toFile();
+        File file = queueDirectory.path().resolve(startSequenceNumber + QUEUE_FILE_EXTENSION).toFile();
         boolean b = file.createNewFile();
         if (!b) {
             throw new IOException(file.getName() + " already existed");
@@ -67,7 +67,7 @@ public class QueueFile implements Closeable {
 
     @SuppressWarnings("java:S2095")
     public static QueueFile open(long startSequenceNumber, QueueDirectory queueDirectory, LadderQueueOptions options) throws IOException {
-        Path path = queueDirectory.path().resolve(startSequenceNumber + INDEX_FILE_EXTENSION);
+        Path path = queueDirectory.path().resolve(startSequenceNumber + QUEUE_FILE_EXTENSION);
         if (!Files.exists(path)) {
             throw new IOException(path.toString() + " did not exists");
         }

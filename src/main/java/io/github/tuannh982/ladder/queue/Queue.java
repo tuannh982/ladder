@@ -6,4 +6,5 @@ import java.io.IOException;
 public interface Queue extends Closeable {
     long put(byte[] value) throws IOException;
     byte[] take() throws IOException;
+    String stats();
 }

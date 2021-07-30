@@ -7,6 +7,8 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 
@@ -20,7 +22,7 @@ public class LadderQueueInternal implements Closeable {
     private QueueFile currentQueueFile;
     // sequence number
     private long writeSequenceNumber;
-    private ReadMetadata readMetadata;
+    private final ReadMetadata readMetadata;
     private QueueFile currentReadFile;
     // locks
     private final RLock writeLock;
@@ -33,24 +35,26 @@ public class LadderQueueInternal implements Closeable {
         if (maxSequenceNumber < 0) {
             maxSequenceNumber = 0;
         }
+        ReadMetadata readMetadata = ReadMetadata.open(queueDirectory);
         return new LadderQueueInternal(
                 options,
                 queueDirectory,
                 queueFileMap,
-                maxSequenceNumber + 1
-        );
+                maxSequenceNumber + 1,
+                readMetadata);
     }
 
     private LadderQueueInternal(
             LadderQueueOptions options,
             QueueDirectory queueDirectory,
             NavigableMap<Long, QueueFile> queueFileMap,
-            long writeSequenceNumber
-            ) {
+            long writeSequenceNumber,
+            ReadMetadata readMetadata) {
         this.options = options;
         this.queueDirectory = queueDirectory;
         this.queueFileMap = queueFileMap;
         this.writeSequenceNumber = writeSequenceNumber;
+        this.readMetadata = readMetadata;
         //
         this.writeLock = new RLock();
     }
@@ -120,7 +124,9 @@ public class LadderQueueInternal implements Closeable {
                 queueFile.close();
             }
             queueDirectory.close();
-            readMetadata.close();
+            if (readMetadata != null) {
+                readMetadata.close();
+            }
         } finally {
             writeLock.release(rlock);
         }
@@ -152,5 +158,19 @@ public class LadderQueueInternal implements Closeable {
             throw new IOException("File already existed");
         }
         return file;
+    }
+
+    public String stats() {
+        List<String> dataFiles = new ArrayList<>(queueFileMap.size());
+        for (QueueFile queueFile : queueFileMap.values()) {
+            dataFiles.add(queueFile.getFile().getName());
+        }
+        return new LadderQueueStats(
+                readMetadata.getReadSequenceNumber(),
+                writeSequenceNumber,
+                (currentReadFile == null) ? null : currentReadFile.getFile().getName(),
+                (currentQueueFile == null) ? null : currentQueueFile.getFile().getName(),
+                dataFiles
+        ).toString();
     }
 }

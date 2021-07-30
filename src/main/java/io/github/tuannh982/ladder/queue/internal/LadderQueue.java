@@ -26,6 +26,11 @@ public class LadderQueue implements Queue {
     }
 
     @Override
+    public String stats() {
+        return internal.stats();
+    }
+
+    @Override
     public void close() throws IOException {
         internal.close();
     }
