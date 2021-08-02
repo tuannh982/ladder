@@ -4,6 +4,7 @@ import io.github.tuannh982.ladder.commons.io.FileUtils;
 import io.github.tuannh982.ladder.queue.internal.file.QueueFile;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 import java.io.IOException;
@@ -12,6 +13,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+@Slf4j
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class DirectoryUtils {
     public static final Pattern DATA_FILE_PATTERN = Pattern.compile("^([0-9]+)\\.data$");
@@ -47,7 +49,7 @@ public class DirectoryUtils {
         }
     }
 
-    @SuppressWarnings({"java:S3776", "java:S4042", "java:S899", "ResultOfMethodCallIgnored"})
+    @SuppressWarnings({"java:S3776", "java:S4042", "java:S899"})
     public static Map.Entry<NavigableMap<Long, QueueFile>, Long> buildQueueFileMap(
             QueueDirectory queueDirectory,
             ReadMetadata readMetadata,
@@ -68,7 +70,10 @@ public class DirectoryUtils {
                 fileStartSequenceNumber = fileId(dataFiles[i], DATA_FILE_PATTERN);
                 if (fileStartSequenceNumber <= readMetadata.getReadSequenceNumber()) {
                     if (floorEntryIndex > 0) {
-                        dataFiles[floorEntryIndex].delete(); // delete stale file
+                        boolean b = dataFiles[floorEntryIndex].delete(); // delete stale file
+                        if (!b) {
+                            log.error("fail to delete file " + dataFiles[floorEntryIndex].getName());
+                        }
                     }
                     floorEntryIndex = i;
                 }
