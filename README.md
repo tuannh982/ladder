@@ -27,3 +27,8 @@ queue.put(data);
 ```java
 byte[] read = queue.take();
 ```
+#### poll
+```java
+long timeoutInMs = 500;
+byte[] read = queue.poll(timeoutInMs);
+```

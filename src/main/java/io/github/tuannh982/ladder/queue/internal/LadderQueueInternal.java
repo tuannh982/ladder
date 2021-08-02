@@ -105,11 +105,11 @@ public class LadderQueueInternal implements Closeable {
                 newDataLock.wait(ms);
             }
         }
-        if (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
-            return null;
-        }
         boolean rlock = readLock.lock();
         try {
+            if (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
+                return null;
+            }
             return getInternal(1);
         } finally {
             readLock.release(rlock);
