@@ -28,6 +28,7 @@ public class LadderQueueInternal implements Closeable {
     private QueueFile currentReadFile;
     // locks
     private final RLock writeLock;
+    private final Object newDataLock = new Object[0];
     // task
     private final ExecutorService compactionService = Executors.newSingleThreadExecutor();
 
@@ -72,13 +73,38 @@ public class LadderQueueInternal implements Closeable {
             return entry.getHeader().getSequenceNumber();
         } finally {
             writeLock.release(rlock);
+            synchronized (newDataLock) {
+                newDataLock.notifyAll();
+            }
         }
     }
 
     @SuppressWarnings("java:S1168")
-    public byte[] take() throws IOException {
+    public byte[] take() throws IOException, InterruptedException {
+        synchronized (newDataLock) {
+            while (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
+                newDataLock.wait();
+            }
+        }
+        return getInternal(1);
+    }
+
+    @SuppressWarnings({"java:S2274", "java:S1168"})
+    public byte[] poll(long ms) throws IOException, InterruptedException {
+        synchronized (newDataLock) {
+            if (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
+                newDataLock.wait(ms);
+            }
+        }
         if (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
-            log.info("no new elements");
+            return null;
+        }
+        return getInternal(1);
+    }
+
+    @SuppressWarnings("java:S1168")
+    private byte[] getInternal(int retries) throws IOException {
+        if (retries == 0) {
             return null;
         }
         if (readMetadata.isEmpty()) {
@@ -97,7 +123,7 @@ public class LadderQueueInternal implements Closeable {
         if (floorEntry == null) {
             log.info("queue file was deleted, skipping entries");
             readMetadata.clear();
-            return take(); // retry
+            return getInternal(retries - 1); // retry
         }
         long entryFileId = floorEntry.getKey();
         if (entryFileId != readMetadata.getCurrentReadFile()) {

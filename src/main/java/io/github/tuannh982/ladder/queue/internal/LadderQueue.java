@@ -21,8 +21,13 @@ public class LadderQueue implements Queue {
     }
 
     @Override
-    public byte[] take() throws IOException {
+    public byte[] take() throws IOException, InterruptedException {
         return internal.take();
+    }
+
+    @Override
+    public byte[] poll(long ms) throws IOException, InterruptedException {
+        return internal.poll(ms);
     }
 
     @Override

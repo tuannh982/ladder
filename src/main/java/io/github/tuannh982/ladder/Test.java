@@ -27,7 +27,7 @@ public class Test {
     }
 
     @SuppressWarnings("all")
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, InterruptedException {
         String path = "/home/tuannh/Desktop/test";
         Queue queue = new LadderQueue(
                 new File(path),
