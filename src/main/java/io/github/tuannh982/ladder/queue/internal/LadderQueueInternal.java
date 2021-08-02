@@ -11,8 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 @Slf4j
 public class LadderQueueInternal implements Closeable {
@@ -28,9 +27,11 @@ public class LadderQueueInternal implements Closeable {
     private QueueFile currentReadFile;
     // locks
     private final RLock writeLock;
+    private final RLock readLock;
     private final Object newDataLock = new Object[0];
     // task
-    private final ExecutorService compactionService = Executors.newSingleThreadExecutor();
+    private CompactionThread compactionThread;
+    private final BlockingQueue<Long> compactionQueue = new LinkedBlockingQueue<>();
 
     public static LadderQueueInternal open(File dir, LadderQueueOptions options) throws IOException {
         QueueDirectory queueDirectory = new QueueDirectory(dir);
@@ -62,6 +63,9 @@ public class LadderQueueInternal implements Closeable {
         this.readMetadata = readMetadata;
         //
         this.writeLock = new RLock();
+        this.readLock = new RLock();
+        // task
+        startCompactionThread();
     }
 
     public long put(byte[] value) throws IOException {
@@ -86,7 +90,12 @@ public class LadderQueueInternal implements Closeable {
                 newDataLock.wait();
             }
         }
-        return getInternal(1);
+        boolean rlock = readLock.lock();
+        try {
+            return getInternal(1);
+        } finally {
+            readLock.release(rlock);
+        }
     }
 
     @SuppressWarnings({"java:S2274", "java:S1168"})
@@ -99,7 +108,12 @@ public class LadderQueueInternal implements Closeable {
         if (readMetadata.getReadSequenceNumber() == writeSequenceNumber) {
             return null;
         }
-        return getInternal(1);
+        boolean rlock = readLock.lock();
+        try {
+            return getInternal(1);
+        } finally {
+            readLock.release(rlock);
+        }
     }
 
     @SuppressWarnings("java:S1168")
@@ -127,9 +141,9 @@ public class LadderQueueInternal implements Closeable {
         }
         long entryFileId = floorEntry.getKey();
         if (entryFileId != readMetadata.getCurrentReadFile()) {
+            compactionQueue.add(readMetadata.getCurrentReadFile());
             readMetadata.setCurrentReadFile(entryFileId);
             readMetadata.setCurrentReadOffset(0);
-            compactionService.submit(() -> deleteQueueFile(currentReadFile.getStartSequenceNumber()));
             currentReadFile = floorEntry.getValue();
         }
         Map.Entry<Record, Integer> readRecordReturn = currentReadFile.read(readMetadata.getCurrentReadOffset());
@@ -143,22 +157,17 @@ public class LadderQueueInternal implements Closeable {
         }
     }
 
-    private void deleteQueueFile(long fileStartSequenceNumber) {
-        if (fileStartSequenceNumber == currentQueueFile.getStartSequenceNumber()) {
-            return;
-        }
-        QueueFile toBeDeletedFile = queueFileMap.get(fileStartSequenceNumber);
-        if (toBeDeletedFile != null) {
-            queueFileMap.remove(fileStartSequenceNumber);
-            toBeDeletedFile.delete();
-        }
-    }
-
+    @SuppressWarnings("java:S2142")
     @Override
     public void close() throws IOException {
         boolean rlock = writeLock.lock();
         try {
-            compactionService.shutdown();
+            try {
+                compactionThread.doStop();
+                compactionThread.join();
+            } catch (InterruptedException e) {
+                log.error(e.getMessage(), e);
+            }
             if (currentQueueFile != null) {
                 currentQueueFile.close();
             }
@@ -214,5 +223,50 @@ public class LadderQueueInternal implements Closeable {
                 (currentQueueFile == null) ? null : currentQueueFile.getFile().getName(),
                 dataFiles
         ).toString();
+    }
+
+    // compaction thread
+
+    private void startCompactionThread() {
+        this.compactionThread = new CompactionThread();
+        this.compactionThread.start();
+    }
+
+    private class CompactionThread extends Thread {
+        private volatile boolean stopped = false;
+
+        public CompactionThread() {
+            setUncaughtExceptionHandler((t, e) -> {
+                log.info("Trying to restart compaction thread");
+                startCompactionThread();
+            });
+        }
+
+        public void doStop() {
+            stopped = true;
+        }
+
+        private void deleteQueueFile(long fileStartSequenceNumber) {
+            QueueFile toBeDeletedFile = queueFileMap.get(fileStartSequenceNumber);
+            if (toBeDeletedFile != null) {
+                queueFileMap.remove(fileStartSequenceNumber);
+                toBeDeletedFile.delete();
+            }
+        }
+
+        @SuppressWarnings("java:S2142")
+        @Override
+        public void run() {
+            while (!stopped) {
+                try {
+                    Long fileToCompact = compactionQueue.poll(1, TimeUnit.SECONDS);
+                    if (fileToCompact != null) {
+                        deleteQueueFile(fileToCompact);
+                    }
+                } catch (InterruptedException e) {
+                    log.error(e.getMessage(), e);
+                }
+            }
+        }
     }
 }
