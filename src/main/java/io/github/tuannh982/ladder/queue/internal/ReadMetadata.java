@@ -1,8 +1,6 @@
 package io.github.tuannh982.ladder.queue.internal;
 
-import io.github.tuannh982.ladder.queue.internal.file.QueueFile;
 import lombok.Getter;
-import lombok.Setter;
 
 import java.io.*;
 import java.nio.MappedByteBuffer;

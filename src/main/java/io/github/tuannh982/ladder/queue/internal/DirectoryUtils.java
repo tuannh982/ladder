@@ -8,7 +8,6 @@ import lombok.NoArgsConstructor;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -48,14 +47,36 @@ public class DirectoryUtils {
         }
     }
 
-    public static Map.Entry<NavigableMap<Long, QueueFile>, Long> buildQueueFileMap(QueueDirectory queueDirectory, LadderQueueOptions options) throws IOException {
+    @SuppressWarnings({"java:S3776", "java:S4042", "java:S899", "ResultOfMethodCallIgnored"})
+    public static Map.Entry<NavigableMap<Long, QueueFile>, Long> buildQueueFileMap(
+            QueueDirectory queueDirectory,
+            ReadMetadata readMetadata,
+            LadderQueueOptions options
+    ) throws IOException {
         File[] dataFiles = queueDirectory.dataFiles();
         NavigableMap<Long, QueueFile> queueFileMap = new ConcurrentSkipListMap<>();
         long fileStartSequenceNumber = Long.MIN_VALUE;
-        for (File dataFile : dataFiles) {
-            fileStartSequenceNumber = fileId(dataFile, DATA_FILE_PATTERN);
-            QueueFile queueFile = QueueFile.open(fileStartSequenceNumber, queueDirectory, options);
-            queueFileMap.put(fileStartSequenceNumber, queueFile);
+        if (readMetadata.isEmpty()) {
+            for (File dataFile : dataFiles) {
+                fileStartSequenceNumber = fileId(dataFile, DATA_FILE_PATTERN);
+                QueueFile queueFile = QueueFile.open(fileStartSequenceNumber, queueDirectory, options);
+                queueFileMap.put(fileStartSequenceNumber, queueFile);
+            }
+        } else {
+            int floorEntryIndex = -1;
+            for (int i = 0; i < dataFiles.length; i++) {
+                fileStartSequenceNumber = fileId(dataFiles[i], DATA_FILE_PATTERN);
+                if (fileStartSequenceNumber <= readMetadata.getReadSequenceNumber()) {
+                    if (floorEntryIndex > 0) {
+                        dataFiles[floorEntryIndex].delete(); // delete stale file
+                    }
+                    floorEntryIndex = i;
+                }
+            }
+            for (int i = floorEntryIndex; i < dataFiles.length; i++) {
+                QueueFile queueFile = QueueFile.open(fileStartSequenceNumber, queueDirectory, options);
+                queueFileMap.put(fileStartSequenceNumber, queueFile);
+            }
         }
         long maxSequenceNumber = Long.MIN_VALUE;
         if (fileStartSequenceNumber != Long.MIN_VALUE) {

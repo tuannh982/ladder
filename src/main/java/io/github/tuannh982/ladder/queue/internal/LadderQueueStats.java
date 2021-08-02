@@ -2,7 +2,6 @@ package io.github.tuannh982.ladder.queue.internal;
 
 import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.ToString;
 
 import java.util.List;
 

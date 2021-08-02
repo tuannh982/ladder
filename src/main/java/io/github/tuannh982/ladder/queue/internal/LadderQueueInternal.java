@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 public class LadderQueueInternal implements Closeable {
@@ -26,16 +28,18 @@ public class LadderQueueInternal implements Closeable {
     private QueueFile currentReadFile;
     // locks
     private final RLock writeLock;
+    // task
+    private final ExecutorService compactionService = Executors.newSingleThreadExecutor();
 
     public static LadderQueueInternal open(File dir, LadderQueueOptions options) throws IOException {
         QueueDirectory queueDirectory = new QueueDirectory(dir);
-        Map.Entry<NavigableMap<Long, QueueFile>, Long> buildQueueFileMapReturn = DirectoryUtils.buildQueueFileMap(queueDirectory, options);
+        ReadMetadata readMetadata = ReadMetadata.open(queueDirectory);
+        Map.Entry<NavigableMap<Long, QueueFile>, Long> buildQueueFileMapReturn = DirectoryUtils.buildQueueFileMap(queueDirectory, readMetadata, options);
         NavigableMap<Long, QueueFile> queueFileMap = buildQueueFileMapReturn.getKey();
         long maxSequenceNumber = buildQueueFileMapReturn.getValue();
         if (maxSequenceNumber < 0) {
             maxSequenceNumber = 0;
         }
-        ReadMetadata readMetadata = ReadMetadata.open(queueDirectory);
         return new LadderQueueInternal(
                 options,
                 queueDirectory,
@@ -99,7 +103,7 @@ public class LadderQueueInternal implements Closeable {
         if (entryFileId != readMetadata.getCurrentReadFile()) {
             readMetadata.setCurrentReadFile(entryFileId);
             readMetadata.setCurrentReadOffset(0);
-            // TODO delete currentReadFile
+            compactionService.submit(() -> deleteQueueFile(currentReadFile.getStartSequenceNumber()));
             currentReadFile = floorEntry.getValue();
         }
         Map.Entry<Record, Integer> readRecordReturn = currentReadFile.read(readMetadata.getCurrentReadOffset());
@@ -113,10 +117,22 @@ public class LadderQueueInternal implements Closeable {
         }
     }
 
+    private void deleteQueueFile(long fileStartSequenceNumber) {
+        if (fileStartSequenceNumber == currentQueueFile.getStartSequenceNumber()) {
+            return;
+        }
+        QueueFile toBeDeletedFile = queueFileMap.get(fileStartSequenceNumber);
+        if (toBeDeletedFile != null) {
+            queueFileMap.remove(fileStartSequenceNumber);
+            toBeDeletedFile.delete();
+        }
+    }
+
     @Override
     public void close() throws IOException {
         boolean rlock = writeLock.lock();
         try {
+            compactionService.shutdown();
             if (currentQueueFile != null) {
                 currentQueueFile.close();
             }
