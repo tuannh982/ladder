@@ -1,4 +1,9 @@
-# Ladder
+Ladder
+======
+
+[![GitHub](https://img.shields.io/github/license/tuannh982/ladder.svg)](https://github.com/tuannh982/ladder/blob/master/LICENSE)
+[![Total Alerts](https://img.shields.io/lgtm/alerts/g/tuannh982/ladder.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/tuannh982/ladder/alerts)
+[![Code Quality: Java](https://img.shields.io/lgtm/grade/java/g/tuannh982/ladder.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/tuannh982/ladder/context:java)
 
 ## Introduction
 Ladder is a lightning fast persistent queue written in Java.
